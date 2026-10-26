@@ -922,15 +922,28 @@
     </div>
 
     <!-- PICKUP QR SCANNER -->
-    <div id="modal-scan" class="hidden fixed inset-0 z-[70] bg-slate-950 overflow-y-auto flex flex-col items-center gap-3 p-4" style="padding-top:calc(env(safe-area-inset-top,0px) + 16px)">
-        <h3 class="text-lg font-extrabold text-white">📷 Scan pickup QR</h3>
-        <div id="scan-cam" class="w-full max-w-sm space-y-3">
-            <div class="relative rounded-2xl overflow-hidden bg-black aspect-square border-2 border-emerald-400/60"><video id="scan-video" playsinline muted class="w-full h-full object-cover"></video></div>
-            <canvas id="scan-canvas" class="hidden"></canvas>
-            <div id="scan-msg" class="text-center text-xs text-slate-300 min-h-[2.5rem]"></div>
+    <style>@keyframes scanline{from{top:0}to{top:calc(100% - 2px)}}</style>
+    <div id="modal-scan" class="hidden fixed inset-0 z-[70] bg-slate-950 overflow-y-auto" style="padding:calc(env(safe-area-inset-top,0px) + 12px) 16px calc(env(safe-area-inset-bottom,0px) + 20px)">
+        <div class="max-w-sm mx-auto space-y-3">
+            <div class="flex items-center justify-between"><h3 class="text-lg font-extrabold text-white">🎟️ Pickup check-in</h3><button onclick="closeScanner()" aria-label="Close" class="w-10 h-10 rounded-full bg-slate-800 text-white text-lg">✕</button></div>
+            <div id="scan-cam" class="space-y-3">
+                <div class="relative rounded-3xl overflow-hidden bg-black aspect-square border border-slate-700">
+                    <video id="scan-video" playsinline muted class="w-full h-full object-cover"></video>
+                    <div class="absolute inset-7 pointer-events-none">
+                        <div class="absolute top-0 left-0 w-9 h-9 border-t-4 border-l-4 border-emerald-400 rounded-tl-2xl"></div><div class="absolute top-0 right-0 w-9 h-9 border-t-4 border-r-4 border-emerald-400 rounded-tr-2xl"></div>
+                        <div class="absolute bottom-0 left-0 w-9 h-9 border-b-4 border-l-4 border-emerald-400 rounded-bl-2xl"></div><div class="absolute bottom-0 right-0 w-9 h-9 border-b-4 border-r-4 border-emerald-400 rounded-br-2xl"></div>
+                        <div class="absolute left-2 right-2 h-0.5 bg-emerald-400/80" style="animation:scanline 1.8s ease-in-out infinite alternate"></div>
+                    </div>
+                </div>
+                <canvas id="scan-canvas" class="hidden"></canvas>
+                <div id="scan-msg" class="rounded-xl px-3 py-2.5 text-center text-xs bg-slate-900 text-slate-300 border border-slate-800"></div>
+                <div class="rounded-2xl bg-slate-900/80 border border-slate-800 p-3 space-y-2">
+                    <div class="text-[11px] text-slate-400">Camera not working? Type the customer’s 6-digit backup code</div>
+                    <div class="flex gap-2"><input id="scan-code" type="text" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off" style="font-size:22px" class="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-center tracking-[0.35em]"><button onclick="scanManual()" class="px-5 rounded-xl bg-cyan-500 text-slate-950 font-bold">Find</button></div>
+                </div>
+            </div>
+            <div id="scan-result" class="hidden"></div>
         </div>
-        <div id="scan-result" class="hidden w-full max-w-sm flex flex-col items-center gap-3 text-center"></div>
-        <button onclick="closeScanner()" class="w-full max-w-sm py-3 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold">Close</button>
     </div>
 
     <!-- TOAST NOTIFICATIONS -->
@@ -4277,64 +4290,113 @@ const RXQR = (() => {
         function moreBadge(role) { return role === 'storekeeper' ? billsDue().length : 0; }
 
         // ================= QR PICKUP =================
-        function pickupBox(o) {
+        const fmtCode = c => String(c).replace(/^(\d{3})(\d{3})$/, '$1 $2');
+        function pickupBox(o) { // customer: the pickup pass
             if (o.fulfillment !== 'pickup') return '';
             const me = (state.roomData.customers || {})[state.currentUser.id] || {};
             const code = (me.pickupCodes || {})[o.id];
-            if (o.status === 'Picked Up') return '<div class="text-[11px] text-emerald-300 font-semibold">✅ Picked up</div>';
+            if (o.status === 'Picked Up') return '<div class="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-center"><div class="text-2xl">✅</div><div class="text-sm font-bold text-emerald-300">Picked up. Thanks!</div></div>';
             if (o.status === 'Refunded' || !code) return '';
-            let qr = '';
-            try { qr = RXQR.svg('RXP|' + o.id + '|' + code, 200); } catch (e) { qr = ''; }
-            return `<div class="rounded-xl border border-cyan-500/40 bg-cyan-500/10 p-3 text-center space-y-2"><div class="text-[10px] uppercase tracking-wider text-cyan-300">Pickup QR · show this to the owner</div>
-                <div class="inline-block rounded-xl overflow-hidden bg-white p-1">${qr}</div>
-                <div class="text-[10px] text-slate-400">Backup code: <span class="font-mono font-bold text-white tracking-[0.2em]">${esc(code)}</span> · works once</div></div>`;
+            const ready = o.status === 'Ready for Pickup';
+            let qr = ''; try { qr = RXQR.svg('RXP|' + o.id + '|' + code, 220); } catch (e) { qr = ''; }
+            return `<div class="rounded-3xl overflow-hidden border border-cyan-400/40 bg-gradient-to-b from-cyan-500/15 to-slate-900/60">
+                <div class="flex items-center justify-between px-4 py-2.5 bg-cyan-500/15"><span class="text-[11px] font-extrabold tracking-widest text-cyan-200">🎟️ PICKUP PASS</span><span class="text-[10px] font-bold rounded-full px-2 py-0.5 ${ready ? 'bg-emerald-400' : 'bg-amber-300'} text-slate-950">${ready ? 'READY · come pick up' : 'Being prepared'}</span></div>
+                <div class="p-4 text-center space-y-3">
+                    <div class="inline-block bg-white rounded-2xl p-2 shadow-lg">${qr || '<div style="width:220px;height:220px" class="flex items-center justify-center text-slate-500 text-xs px-4">QR unavailable. Use the code below.</div>'}</div>
+                    <div><div class="text-[10px] uppercase tracking-widest text-slate-400">Backup code</div><div class="font-mono font-extrabold text-3xl tracking-[0.2em] text-white">${fmtCode(code)}</div></div>
+                    <div class="text-[11px] text-slate-400 leading-relaxed">Show this to the owner when you arrive.<br>Turn your screen brightness up. Works once.</div>
+                </div></div>`;
         }
-        const pickupTries = {};
-        async function verifyPickupCode(orderId, code) {
+        const pickupTries = {}, pickupVerified = {};
+        // Checks the code. Changes NOTHING: the owner still has to look at the order and hand over.
+        async function checkPickupCode(orderId, code) {
             const o = (state.roomData.orders || []).find(x => x.id === orderId);
-            if (!o || !rxIsOwner()) return { ok: false, msg: 'Only the owner can confirm a pickup.' };
+            if (!rxIsOwner()) return { ok: false, msg: 'Only the owner can confirm a pickup.' };
+            if (!o) return { ok: false, msg: 'No order matches that code.' };
             if (o.fulfillment !== 'pickup' || !o.pickup) return { ok: false, msg: 'This is not a pickup order.' };
-            if (o.pickup.used || o.status === 'Picked Up') return { ok: false, msg: 'This QR was already used.' };
+            if (o.pickup.used || o.status === 'Picked Up') return { ok: false, msg: 'This pass was already used.' };
+            if (o.status === 'Refunded') return { ok: false, msg: 'This order was refunded.' };
             if (!isOrderActive(o)) return { ok: false, msg: 'This order is closed.' };
+            if (o.pickup.exp && Date.now() > o.pickup.exp) return { ok: false, msg: 'This pass has expired.' };
             const t = pickupTries[orderId] || { n: 0, until: 0 };
             if (Date.now() < t.until) return { ok: false, msg: 'Too many wrong tries. Wait a minute.' };
             if (!/^\d{6}$/.test(code)) return { ok: false, msg: 'That isn’t a valid pickup code.' };
             if (await sha256(o.pickup.salt + code) !== o.pickup.hash) {
                 t.n++; if (t.n >= 5) { t.n = 0; t.until = Date.now() + 60000; }
                 pickupTries[orderId] = t;
-                return { ok: false, msg: 'Wrong code. This QR doesn’t match the order.' };
+                return { ok: false, msg: 'Wrong code. This doesn’t match the order.' };
             }
+            delete pickupTries[orderId]; pickupVerified[o.id] = Date.now();
+            return { ok: true, order: o };
+        }
+        async function verifyPickup(orderId) { // "Confirm Pickup" on an order card
+            const input = document.getElementById('pickup-code-' + orderId);
+            const r = await checkPickupCode(orderId, input ? input.value.trim() : '');
+            if (!r.ok) { playAudioTone('alert'); showToast(r.msg); return; }
+            showPickupResult(r.order);
+        }
+        const scanShow = (cam, resHtml) => {
+            document.getElementById('modal-scan').classList.remove('hidden');
+            document.getElementById('scan-cam').classList.toggle('hidden', !cam);
+            const res = document.getElementById('scan-result');
+            res.classList.toggle('hidden', cam); if (resHtml != null) res.innerHTML = resHtml;
+        };
+        function showPickupResult(o) { // step 2: owner checks the order, then hands over
+            stopScanStream(); playAudioTone('chime');
+            scanShow(false, `<div class="rounded-3xl border border-emerald-400/40 bg-slate-900 overflow-hidden">
+                <div class="px-4 py-3 bg-emerald-500/15 text-center"><div class="text-[11px] font-extrabold tracking-widest text-emerald-300">✓ CODE VERIFIED</div><div class="text-xs text-slate-300 mt-0.5">Check the items below, then hand them over</div></div>
+                <div class="p-4 space-y-3">
+                    <div class="flex items-center justify-between"><div><div class="font-mono font-extrabold text-xl text-white">${esc(o.id)}</div><div class="text-sm text-slate-300">for <strong>${esc(o.customerName || 'Customer')}</strong></div></div><div class="font-mono font-bold text-gold-400">$${(o.total || 0).toFixed(2)}</div></div>
+                    <div class="space-y-2">${(o.items || []).map(i => `<div class="flex items-center gap-3 rounded-xl bg-slate-950/60 border border-slate-800 p-2">${itemThumb(i, 'w-14 h-14')}<div class="flex-1 min-w-0 text-sm text-white font-semibold">${esc(i.name)}</div><div class="font-mono font-bold text-cyan-300 text-lg">×${i.qty}</div></div>`).join('')}</div>
+                    ${o.note ? `<div class="text-[11px] italic text-slate-400 bg-slate-950/60 rounded-xl p-2">Note: ${esc(o.note)}</div>` : ''}
+                </div></div>
+                <button onclick="finishPickup('${esc(o.id)}')" class="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950 font-extrabold text-base">Hand over · mark Picked Up ✓</button>
+                <button onclick="openScanner()" class="w-full py-3 rounded-2xl bg-slate-800 text-white font-bold">Not now · back to scanner</button>`);
+        }
+        function finishPickup(orderId) { // step 3: only after a verified check, only the owner
+            const o = (state.roomData.orders || []).find(x => x.id === orderId), t = pickupVerified[orderId];
+            if (!o || !rxIsOwner() || !t || Date.now() - t > 120000) { showToast('Scan or type the code again.'); openScanner(); return; }
+            if (o.pickup.used || !isOrderActive(o)) { showToast('This order can no longer be picked up.'); openScanner(); return; }
             o.pickup.used = true; o.pickup.usedAt = Date.now();
             o.status = 'Picked Up';
             (o.statusHistory = o.statusHistory || []).push({ status: 'Picked Up', at: Date.now() });
-            delete pickupTries[orderId];
-            syncData(); playAudioTone('chime'); renderStorekeeperView();
-            return { ok: true, msg: 'Pickup confirmed for ' + o.id, order: o };
+            delete pickupVerified[orderId];
+            syncData(); playAudioTone('chime');
+            try { renderStorekeeperView(); } catch (e) { console.error('refresh after pickup', e); } // a refresh hiccup must never hide the confirmation
+            scanShow(false, `<div class="rounded-3xl border border-emerald-400/40 bg-slate-900 p-6 text-center space-y-2"><div class="text-6xl">✅</div><div class="text-xl font-extrabold text-emerald-300">Handed over</div><div class="text-sm text-slate-300">${esc(o.id)} is marked <strong>Picked Up</strong>.<br>This pass can’t be used again.</div></div>
+                <button onclick="openScanner()" class="w-full py-3.5 rounded-2xl bg-cyan-500 text-slate-950 font-extrabold">Scan next customer</button>
+                <button onclick="closeScanner()" class="w-full py-3 rounded-2xl bg-slate-800 text-white font-bold">Done</button>`);
         }
-        async function verifyPickup(orderId) {
-            const input = document.getElementById('pickup-code-' + orderId);
-            const r = await verifyPickupCode(orderId, input ? input.value.trim() : '');
-            showToast(r.msg);
-        }
-
+        // ---- scanner
         let scanStream = null, scanTimer = 0, scanDetector = null, scanBusy = false, scanFrames = 0;
-        function scanSet(html) { const m = document.getElementById('scan-msg'); if (m) m.innerHTML = html; }
-        function loadJsQR() { // resolves true once the decoder is ready; a failed load can be retried next time
-            return new Promise(res => {
-                if (window.jsQR) return res(true);
-                const s = document.createElement('script');
-                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js';
-                s.onload = () => res(!!window.jsQR);
-                s.onerror = () => { s.remove(); res(false); };
-                document.head.appendChild(s);
-            });
+        const TONES = { ok: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40', warn: 'bg-amber-500/15 text-amber-300 border-amber-500/40', bad: 'bg-rose-500/15 text-rose-300 border-rose-500/40', '': 'bg-slate-900 text-slate-300 border-slate-800' };
+        function scanSet(html, tone) { const m = document.getElementById('scan-msg'); if (m) { m.className = 'rounded-xl px-3 py-2.5 text-center text-xs border ' + (TONES[tone || ''] || TONES['']); m.innerHTML = html; } }
+        const JSQR_SOURCES = ['./jsQR.js', 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js', 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js', 'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js'];
+        let jsqrLoading = null;
+        function loadJsQR() { // true once the decoder is ready; tries each source in turn; a failure can be retried
+            if (window.jsQR) return Promise.resolve(true);
+            if (jsqrLoading) return jsqrLoading;
+            jsqrLoading = (async () => {
+                for (const src of JSQR_SOURCES) {
+                    const ok = await new Promise(res => {
+                        const el = document.createElement('script');
+                        el.src = src; el.async = true;
+                        el.onload = () => res(!!window.jsQR);
+                        el.onerror = () => { el.remove(); res(false); };
+                        setTimeout(() => res(!!window.jsQR), 8000);
+                        document.head.appendChild(el);
+                    });
+                    if (ok) return true;
+                }
+                return false;
+            })().finally(() => { jsqrLoading = null; });
+            return jsqrLoading;
         }
         async function openScanner() {
             if (!rxIsOwner()) return;
-            document.getElementById('modal-scan').classList.remove('hidden');
-            document.getElementById('scan-result').classList.add('hidden');
-            document.getElementById('scan-cam').classList.remove('hidden');
-            scanBusy = false; scanFrames = 0; stopScanStream();
+            stopScanStream(); scanShow(true, ''); scanBusy = false; scanFrames = 0;
+            Object.keys(pickupVerified).forEach(k => delete pickupVerified[k]); // leaving the check screen cancels any pending hand-over
+            document.getElementById('scan-code').value = '';
             scanSet('Starting camera…');
             try {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('nocam');
@@ -4344,16 +4406,16 @@ const RXQR = (() => {
                 scanDetector = null;
                 if ('BarcodeDetector' in window) { try { scanDetector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { scanDetector = null; } }
                 if (!window.jsQR) {
-                    if (scanDetector) loadJsQR(); // backup decoder, loads in the background
+                    if (scanDetector) loadJsQR();
                     else {
-                        scanSet('Loading scanner…');
-                        if (!(await loadJsQR())) { scanSet('<span class="text-rose-300">Couldn’t load the QR scanner. Check your internet and tap Scan again, or type the backup code on the order card.</span>'); return; }
+                        scanSet('Loading the QR reader…', 'warn');
+                        if (!(await loadJsQR())) { scanSet('The QR reader couldn’t download (your network may block it). Type the backup code below, or <button onclick="openScanner()" class="underline font-bold">try again</button>.', 'bad'); return; }
                     }
                 }
-                scanSet('Point the camera at the QR. Hold steady with the QR filling most of the square.');
+                scanSet('Hold the customer’s QR inside the frame', 'ok');
                 scanLoop();
             } catch (e) {
-                scanSet('Camera isn’t available. Allow camera access for this site in Safari settings, or type the customer’s backup code on the order card.');
+                scanSet('Camera unavailable. Allow camera access for this site (Settings › Safari › Camera), or type the backup code below.', 'bad');
             }
         }
         function scanLoop() {
@@ -4378,7 +4440,7 @@ const RXQR = (() => {
                                 if (r) raw = r.data || '';
                             } catch (e) { /* keep scanning */ }
                         }
-                        if (!raw && scanFrames % 6 === 0) scanSet('Scanning… <span class="text-slate-500">(' + v.videoWidth + '×' + v.videoHeight + ')</span> Hold steady, fill the square with the QR, avoid glare.');
+                        if (!raw && scanFrames % 8 === 0) scanSet('Scanning… fill the frame with the QR, hold steady, avoid glare <span class="text-slate-500">(' + v.videoWidth + '×' + v.videoHeight + ')</span>', 'ok');
                     }
                     if (raw) await scanHandle(raw);
                 }
@@ -4387,27 +4449,25 @@ const RXQR = (() => {
         }
         async function scanHandle(raw) {
             const m = /^RXP\|([^|]{1,40})\|(\d{6})$/.exec(String(raw).trim());
-            if (!m) { scanSet('<span class="text-amber-300">That isn’t a Room Express pickup QR.</span>'); return; }
+            if (!m) { scanSet('That isn’t a Room Express pickup QR.', 'warn'); return; }
             scanBusy = true;
-            const r = await verifyPickupCode(m[1], m[2]);
-            if (!r.ok) { playAudioTone('alert'); scanSet('<span class="text-rose-300 font-bold">' + esc(r.msg) + '</span>'); setTimeout(() => { scanBusy = false; }, 1800); return; }
-            const o = r.order;
-            document.getElementById('scan-cam').classList.add('hidden');
-            const res = document.getElementById('scan-result');
-            res.innerHTML = `<div class="text-5xl">✅</div><div class="text-lg font-extrabold text-emerald-300">Unlocked for pickup</div>
-                <div class="text-xs text-slate-300">${esc(o.id)} · ${esc(o.customerName || 'Customer')}</div>
-                <div class="w-full rounded-xl bg-slate-900 border border-slate-700 p-3 text-sm text-left space-y-1">${(o.items || []).map(i => `<div class="flex justify-between"><span>${esc(i.name)} ×${i.qty}</span></div>`).join('')}</div>
-                <div class="text-xs text-slate-400">Hand these over. This QR can’t be used again.</div>
-                <button onclick="openScanner()" class="w-full py-3 rounded-xl bg-cyan-500 text-slate-950 font-bold">Scan next</button>`;
-            res.classList.remove('hidden');
-            stopScanStream();
+            const r = await checkPickupCode(m[1], m[2]);
+            if (!r.ok) { playAudioTone('alert'); scanSet(esc(r.msg), 'bad'); setTimeout(() => { scanBusy = false; }, 1800); return; }
+            showPickupResult(r.order);
+        }
+        async function scanManual() { // typed code: find the waiting pickup order it belongs to
+            const code = (document.getElementById('scan-code').value || '').trim();
+            if (!/^\d{6}$/.test(code)) { scanSet('Enter the 6-digit code shown under the customer’s QR.', 'warn'); return; }
+            for (const o of (state.roomData.orders || []).filter(x => x.fulfillment === 'pickup' && x.pickup && !x.pickup.used && isOrderActive(x)))
+                if (await sha256(o.pickup.salt + code) === o.pickup.hash) { await scanHandle('RXP|' + o.id + '|' + code); return; }
+            playAudioTone('alert'); scanSet('No waiting pickup order matches that code.', 'bad');
         }
         function stopScanStream() {
             clearTimeout(scanTimer);
             if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
             const v = document.getElementById('scan-video'); if (v) v.srcObject = null;
         }
-        function closeScanner() { stopScanStream(); document.getElementById('modal-scan').classList.add('hidden'); }
+        function closeScanner() { stopScanStream(); Object.keys(pickupVerified).forEach(k => delete pickupVerified[k]); document.getElementById('modal-scan').classList.add('hidden'); }
 
         // ================= LOUD PINGS =================
         function rxBigPing(ctx, now, type) {
