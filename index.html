@@ -922,7 +922,7 @@
     </div>
 
     <!-- PICKUP QR SCANNER -->
-    <div id="modal-scan" class="hidden fixed inset-0 z-[70] bg-slate-950/97 flex flex-col items-center gap-3 p-4" style="padding-top:calc(env(safe-area-inset-top,0px) + 16px)">
+    <div id="modal-scan" class="hidden fixed inset-0 z-[70] bg-slate-950 overflow-y-auto flex flex-col items-center gap-3 p-4" style="padding-top:calc(env(safe-area-inset-top,0px) + 16px)">
         <h3 class="text-lg font-extrabold text-white">📷 Scan pickup QR</h3>
         <div id="scan-cam" class="w-full max-w-sm space-y-3">
             <div class="relative rounded-2xl overflow-hidden bg-black aspect-square border-2 border-emerald-400/60"><video id="scan-video" playsinline muted class="w-full h-full object-cover"></video></div>
@@ -4317,32 +4317,43 @@ const RXQR = (() => {
             showToast(r.msg);
         }
 
-        let scanStream = null, scanTimer = 0, scanDetector = null, scanBusy = false, scanLoadingLib = false;
+        let scanStream = null, scanTimer = 0, scanDetector = null, scanBusy = false, scanFrames = 0;
         function scanSet(html) { const m = document.getElementById('scan-msg'); if (m) m.innerHTML = html; }
+        function loadJsQR() { // resolves true once the decoder is ready; a failed load can be retried next time
+            return new Promise(res => {
+                if (window.jsQR) return res(true);
+                const s = document.createElement('script');
+                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js';
+                s.onload = () => res(!!window.jsQR);
+                s.onerror = () => { s.remove(); res(false); };
+                document.head.appendChild(s);
+            });
+        }
         async function openScanner() {
             if (!rxIsOwner()) return;
             document.getElementById('modal-scan').classList.remove('hidden');
             document.getElementById('scan-result').classList.add('hidden');
             document.getElementById('scan-cam').classList.remove('hidden');
-            scanBusy = false;
+            scanBusy = false; scanFrames = 0; stopScanStream();
             scanSet('Starting camera…');
             try {
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('nocam');
-                scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+                scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
                 const v = document.getElementById('scan-video');
                 v.srcObject = scanStream; await v.play();
-                scanSet('Point the camera at the customer’s pickup QR');
+                scanDetector = null;
                 if ('BarcodeDetector' in window) { try { scanDetector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { scanDetector = null; } }
-                if (!scanDetector && !window.jsQR && !scanLoadingLib) {
-                    scanLoadingLib = true;
-                    const s = document.createElement('script');
-                    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js';
-                    s.onerror = () => scanSet('Couldn’t load the scanner. Check your internet, or type the backup code on the order card.');
-                    document.head.appendChild(s);
+                if (!window.jsQR) {
+                    if (scanDetector) loadJsQR(); // backup decoder, loads in the background
+                    else {
+                        scanSet('Loading scanner…');
+                        if (!(await loadJsQR())) { scanSet('<span class="text-rose-300">Couldn’t load the QR scanner. Check your internet and tap Scan again, or type the backup code on the order card.</span>'); return; }
+                    }
                 }
+                scanSet('Point the camera at the QR. Hold steady with the QR filling most of the square.');
                 scanLoop();
             } catch (e) {
-                scanSet('Camera isn’t available. Allow camera access for this site, or type the customer’s backup code on the order card.');
+                scanSet('Camera isn’t available. Allow camera access for this site in Safari settings, or type the customer’s backup code on the order card.');
             }
         }
         function scanLoop() {
@@ -4353,24 +4364,26 @@ const RXQR = (() => {
                 if (!scanBusy) {
                     const v = document.getElementById('scan-video');
                     let raw = '';
-                    try {
-                        if (v.readyState >= 2) {
-                            if (scanDetector) { const r = await scanDetector.detect(v); if (r && r[0]) raw = r[0].rawValue || ''; }
-                            else if (window.jsQR) {
-                                const c = document.getElementById('scan-canvas'), k = Math.min(1, 480 / Math.max(v.videoWidth, v.videoHeight, 1));
+                    if (v.readyState >= 2 && v.videoWidth) {
+                        scanFrames++;
+                        try { if (scanDetector) { const r = await scanDetector.detect(v); if (r && r[0]) raw = r[0].rawValue || ''; } } catch (e) { scanDetector = null; loadJsQR(); }
+                        if (!raw && window.jsQR) {
+                            try {
+                                const c = document.getElementById('scan-canvas'), k = Math.min(1, 1000 / Math.max(v.videoWidth, v.videoHeight));
                                 c.width = Math.max(1, Math.round(v.videoWidth * k)); c.height = Math.max(1, Math.round(v.videoHeight * k));
                                 const cx = c.getContext('2d', { willReadFrequently: true });
                                 cx.drawImage(v, 0, 0, c.width, c.height);
                                 const img = cx.getImageData(0, 0, c.width, c.height);
-                                const r = window.jsQR(img.data, c.width, c.height, { inversionAttempts: 'attemptBoth' });
+                                const r = window.jsQR(img.data, c.width, c.height, { inversionAttempts: 'dontInvert' });
                                 if (r) raw = r.data || '';
-                            }
+                            } catch (e) { /* keep scanning */ }
                         }
-                    } catch (e) { /* keep scanning */ }
+                        if (!raw && scanFrames % 6 === 0) scanSet('Scanning… <span class="text-slate-500">(' + v.videoWidth + '×' + v.videoHeight + ')</span> Hold steady, fill the square with the QR, avoid glare.');
+                    }
                     if (raw) await scanHandle(raw);
                 }
                 scanLoop();
-            }, 160);
+            }, 120);
         }
         async function scanHandle(raw) {
             const m = /^RXP\|([^|]{1,40})\|(\d{6})$/.exec(String(raw).trim());
